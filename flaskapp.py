@@ -1,0 +1,390 @@
+import os
+import sys
+import json
+import urllib2
+import requests
+import random
+from flask import Flask, request
+
+#--
+
+import pickledb 
+
+app = Flask(__name__)
+app.config.from_pyfile('flaskapp.cfg')
+db = pickledb.load('inout.db', True)
+
+db.set('assistant', 'off')
+db.set('task', '')
+
+
+PAGE_TOKEN = "EAAExavaXrl8BAFID6JKx5i3GZA6hcKRslxAKsZAUt5IISAFm5CMYJ27sQnaIhzoMYbEw9Nadd5LO9FzqDf2u8qTUP0dcUcZCfxm4u012zEtjpTthb2HQOZAtLvGoIxiIN4cC6XBmCRbIi1OCwweLZCyel6vwZA91kGGN7Kqs1H1wZDZD"
+VERIFY_TOKEN = "inout_by_daxeelsoni"
+
+
+@app.route('/', methods=['GET'])
+def verify():
+    # when the endpoint is registered as a webhook, it must
+    # return the 'hub.challenge' value in the query arguments
+    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
+        if not request.args.get("hub.verify_token") == VERIFY_TOKEN:
+            return "Verification token mismatch", 403
+        return request.args["hub.challenge"], 200
+
+    return "Hello world", 200
+
+@app.route('/api/<inout_type>/<value>', methods=['GET'])
+def api(inout_type, value):
+	if inout_type == "task_status":
+		db.set('task_status', value)
+	elif inout_type == "machine_status":
+		db.set('machine_status', value)
+	elif inout_type == "temp":
+		db.set('temp', value)
+	elif inout_type == "humidity":
+		db.set('humidity', value)
+	elif inout_type == "task":
+		db.set('task', '')
+
+	return "done"
+
+@app.route('/api_get', methods=['GET'])
+def api_get():
+	final = {}
+	task_status = db.get('task_status')
+	machine_status = db.get('machine_status')
+	temp = db.get('temp')
+	humidity = db.get('humidity')
+	task = db.get('task')
+
+	final['task_status'] = task_status
+	final['machine_status'] = machine_status
+	final['temp'] = temp
+	final['humidity'] = humidity
+	final['task'] = task
+
+	return json.dumps(final)
+
+
+@app.route('/', methods=['POST'])
+def webook():
+
+    # endpoint for processing incoming messaging events
+
+    data = request.get_json()
+    log(data)  # you may not want to log every incoming message in production, but it's good for testing
+
+    if data["object"] == "page":
+
+        for entry in data["entry"]:
+            for messaging_event in entry["messaging"]:
+
+                if messaging_event.get("message"):  # someone sent us a message
+					print '&'*10
+					print messaging_event
+					print '&'*10
+
+					sender_id = messaging_event["sender"]["id"]        # the facebook ID of the person sending you the message
+					recipient_id = messaging_event["recipient"]["id"]  # the recipient's ID, which should be your page's facebook ID
+
+					message_text = messaging_event["message"]["text"]  # the message's text
+
+					
+
+					if db.get('assistant') == "off":
+						message_text = message_text.split()
+                    
+						if "task" in message_text:
+							if db.get('machine_status') == "on":
+								send_msg = str(db.get('task_status')) + " %" + " work is completed."
+							else:
+								send_msg = "Currently machine is switched OFF."
+							send_message(sender_id, send_msg) 
+						elif "machine" in message_text:
+							send_msg = "Machine is currently switched " + db.get('machine_status').upper()
+							send_message(sender_id, send_msg) 
+						elif "temperature" in message_text:
+							send_msg = "Temperature is : " + str(db.get('temp')) + " celcius"
+							send_message(sender_id, send_msg)
+						elif "humidity" in message_text:
+							send_msg = "Humidity is : " + str(db.get('humidity'))
+							send_message(sender_id, send_msg)
+						elif "draw" in message_text:
+							send_msg = "ok"
+							send_message(sender_id, send_msg)
+							db.set('task', 'circle')
+
+						
+
+						else:
+							send_msg = "Unable to understand. I am still learning!"
+							send_message(sender_id, send_msg)
+
+					else:
+
+						if "No" in message_text:
+							db.set('assistant', 'off')
+							send_msg = "Thank you. Nice to talk to you."
+							send_message(sender_id, send_msg) 
+
+						elif "Yes" in message_text:
+							all_q = ["Tell me your query.", "How can i help you?", "Ask me your doubt.", "Let me solve your query."]
+							all_ok = ["Alright!", "Cool!", "Awesome!", "Like it!"]
+
+							send_msg = random.choice(all_ok)
+							send_message(sender_id, send_msg) 
+
+							send_msg = random.choice(all_q)
+							send_message(sender_id, send_msg) 
+
+						else:
+							all_think = ["Thinking...", "Searching...", "Looking up..."]
+							send_msg = random.choice(all_think)
+							send_message(sender_id, send_msg) 
+
+							if "use" in message_text.split() or "machine" in message_text.split():
+								send_msg = "STEP : 1 -> Generate GCode file. \nSTEP : 1 -> Press OK button & Thats it!"
+								send_message(sender_id, send_msg) 
+							if "gcode" in message_text.split() or "file" in message_text.split():
+								send_msg = "->GCode file tells the CNC machine in which direction to move to complete the specific task. \n->Gcode file is generated by Image Processing of the design you want."
+								send_message(sender_id, send_msg) 
+
+							send_quick_reply_again(sender_id)
+
+
+
+
+
+
+ 
+                if messaging_event.get("delivery"):  # delivery confirmation
+                    pass
+
+                if messaging_event.get("optin"):  # optin confirmation
+                    pass
+
+                if messaging_event.get("postback"):  # user clicked/tapped "postback" button in earlier message
+					msg = messaging_event["postback"]['payload']
+					send_id = messaging_event["sender"]['id']
+
+					if msg == "start_button":
+						send_msg = "Welcome to CNC Bot."
+						send_message(send_id, send_msg) 
+
+					elif msg == "machine_status":
+						send_msg = "Machine is currently switched " + db.get('machine_status').upper()
+						send_message(send_id, send_msg) 
+					elif msg == "task_status":
+						if db.get('machine_status') == "on":
+							send_msg = str(db.get('task_status')) + " %" + " work is completed."
+						else:
+							send_msg = "Currently machine is switched OFF."
+						send_message(send_id, send_msg) 
+					elif msg == "temp_hum":
+						send_msg = "Temperature is : " + str(db.get('temp')) + " celcius"
+						send_message(send_id, send_msg) 
+					elif msg == "turn_off":
+							
+
+						if db.get('machine_status') == "off":
+							send_msg = "Machine is already turned off."
+							send_message(send_id, send_msg) 
+						else:
+							# send_msg = "I am turning machine OFF..."
+							# send_message(send_id, send_msg) 
+							urllib2.urlopen("http://inout-daxeelsoni.rhcloud.com/api/task_status/12")
+							send_msg = "Machine is turned off."
+							send_message(send_id, send_msg) 
+
+						
+
+					elif msg == "personal":
+						all_q = ["Tell me your query.", "How can i help you?", "Ask me your doubt.", "Let me solve your query."]
+						send_msg = "I am your personal assistant."
+						send_message(send_id, send_msg) 
+						send_msg = random.choice(all_q)
+						send_message(send_id, send_msg) 
+						db.set('assistant', 'on')
+						# send_quick_reply(send_id, 'ask_start')
+
+					# elif msg == "ask_start":
+					# 	db.set('assistant', 'on')
+					# 	send_msg = "Tell me your query"
+					# 	send_message(send_id, send_msg) 
+
+					# elif msg == "done_no":
+					# 	db.set('assistant', 'off')
+					# 	send_msg = "Thank you. Nice to talk to you."
+					# 	send_message(send_id, send_msg) 
+
+					# elif msg == "done_yes":
+					# 	send_msg = "Ok. Ask another query."
+					# 	send_message(send_id, send_msg) 
+						# db.set('assistant', 'off')
+
+					
+
+    return "ok", 200
+
+
+def send_message(recipient_id, message_text):
+
+    log("sending message to {recipient}: {text}".format(recipient=recipient_id, text=message_text))
+
+    params = {
+        "access_token": PAGE_TOKEN
+    }
+    headers = {
+        "Content-Type": "application/json"
+    }
+    data = json.dumps({
+        "recipient": {
+            "id": recipient_id
+        },
+        "message": {
+            "text": message_text
+        }
+    })
+    r = requests.post("https://graph.facebook.com/v2.6/me/messages", params=params, headers=headers, data=data)
+    if r.status_code != 200:
+        log(r.status_code)
+        log(r.text)
+
+#menu
+def per_menu():
+	params = {
+		"access_token": PAGE_TOKEN
+	}
+	headers = {
+		"Content-Type": "application/json"
+	}
+
+	data = json.dumps({
+			"setting_type" : "call_to_actions",
+			"thread_state" : "existing_thread",
+			"call_to_actions":[
+				{
+					"type":"postback",
+					"title":"Machine Status",
+					"payload":"machine_status"
+				},
+				{
+					"type":"postback",
+					"title":"Current Task",
+					"payload":"task_status"
+				},
+				{
+					"type":"postback",
+					"title":"Temperature",
+					"payload":"temp_hum"
+				},
+				{
+					"type":"postback",
+					"title":"Turn OFF Machine",
+					"payload":"turn_off"
+				},
+				{
+					"type":"postback",
+					"title":"Personal Assistant",
+					"payload":"personal"
+				}
+			]
+		})
+	r = requests.post("https://graph.facebook.com/v2.6/me/thread_settings", params=params, headers=headers, data=data)
+
+#menu
+def start_button():
+	params = {
+		"access_token": PAGE_TOKEN
+	}
+	headers = {
+		"Content-Type": "application/json"
+	}
+
+	data = json.dumps({
+			"setting_type" : "call_to_actions",
+			"thread_state" : "new_thread",
+			"call_to_actions":[
+				{
+					"payload":"start_button"
+				}
+			]
+		})
+	r = requests.post("https://graph.facebook.com/v2.6/me/thread_settings", params=params, headers=headers, data=data)
+
+
+per_menu()
+start_button()
+
+
+
+
+def send_quick_reply(recipient_id, q_type):
+
+	params = {
+        "access_token": PAGE_TOKEN
+    }
+	headers = {
+        "Content-Type": "application/json"
+    }
+	data = json.dumps({
+        "recipient": {
+            "id": recipient_id
+        },
+        "message": {
+						"text":"Tap ASK to continue",
+						"quick_replies":[{
+							"content_type":"text",
+							"title":"ASK",
+							"payload":q_type
+						}]
+					}
+    })
+
+	r = requests.post("https://graph.facebook.com/v2.6/me/messages", params=params, headers=headers, data=data)
+
+def send_quick_reply_again(recipient_id):
+
+	all_ask_again = ["Want to ask again?", "Any other query?", "Have another question?"]
+
+	params = {
+        "access_token": PAGE_TOKEN
+    }
+	headers = {
+        "Content-Type": "application/json"
+    }
+	data = json.dumps({
+        "recipient": {
+            "id": recipient_id
+        },
+        "message": {
+						"text":random.choice(all_ask_again),
+						"quick_replies":[{
+							"content_type":"text",
+							"title":"Yes",
+							"payload":"done_yes"
+						},
+						{
+							"content_type":"text",
+							"title":"No",
+							"payload":"done_no"
+						}]
+					}
+    })
+
+	r = requests.post("https://graph.facebook.com/v2.6/me/messages", params=params, headers=headers, data=data)
+
+
+
+
+
+def log(message):  # simple wrapper for logging to stdout on heroku
+	print "-"*10
+	# print str(message)
+	sys.stdout.flush()
+
+# app id - 1626493137661365
+# page id - EAAXHSXGzLbUBABOG4sJMQYzHNYgf3419pwCGfXFSKYmJReXqxU9pjQEDqtq6r6liipbZCIMptoJ8exs0QOEAb81th61V95BQbpCJNDIgTFSTwq6B6ZCASCZBvSqsp4DdO27Y4Y2F4GzCTQtaaK5Jp3V9CHArqmGHPvnT8OCSQZDZD
+
+if __name__ == '__main__':
+    app.run(debug=True)
