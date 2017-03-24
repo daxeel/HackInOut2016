@@ -12,4 +12,4 @@ It is a miniature version of a Real time CNC machine, which students can use for
 ## More Details
 http://devpost.com/software/iot-based-facebook-chatbot-controlled-cnc-machine
 
-# And yes, we won Best Harware Hack - 2nd Prize @HackInOut 2016
+# And yes, we won Best Hardware Hack - 2nd Prize @HackInOut 2016
